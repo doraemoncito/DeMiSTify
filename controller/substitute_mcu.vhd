@@ -28,7 +28,7 @@ entity substitute_mcu is
 		sysclk_frequency : integer := 500; -- Sysclk frequency * 10
 		SPI_SLOWBIT : integer := 6;  -- ~384KHz when sysclk is 50MHz
 		SPI_FASTBIT : integer := 2 ; -- ~5MHz when sysclk is 50MHz
-		SPI_INTERNALBIT : integer := 0; -- Full speed when 0, half speed when 1
+		SPI_INTERNALBIT : integer := 1; -- Full speed when 0, half speed when 1
 		SPI_EXTERNALCLK : boolean := false
 	);
 	port (
@@ -99,7 +99,8 @@ signal millisecond_tick : unsigned(19 downto 0);
 signal spi_ack_d : std_logic;
 signal spi_req_out : std_logic;
 signal spi_ack_r : std_logic;
-signal spi_tick : unsigned(8 downto 0);
+signal spi_counter : unsigned(8 downto 0);
+signal spi_tick : std_logic;
 signal spi_fast_sd : std_logic;
 signal spi_fast_int : std_logic;
 signal spi_cs_int : std_logic;
@@ -216,7 +217,7 @@ joy4_r(3 downto 0) <= not (joy4(0)&joy4(1)&joy4(2)&joy4(3));
 
 -- Reset counter.
 
-process(clk)
+process(clk, reset_in)
 begin
 	if reset_in='0' then -- or sdr_ready='0' then
 		reset_counter<=X"FFFF";
@@ -346,17 +347,20 @@ spi_req<=spi_req_out;
 process(clk)
 begin
 	if rising_edge(clk) then
-		spi_tick<=spi_tick+1;
+		spi_counter<=spi_counter+1;
 		spi_ack_d<=spi_ack;
+		spi_tick<='0';
 		if (spi_fast_sd='1' and SPI_EXTERNALCLK=true) then
+			spi_tick<='1';
 			spi_ack_r<=spi_ack_d;
-			spi_tick<=(others=>'0');
-		elsif (spi_fast_sd='1' and spi_tick(SPI_FASTBIT)='1')
---				or (spi_fast_int='1' and spi_tick(0)='1')
-				or (spi_fast_int='1' and (spi_tick(SPI_INTERNALBIT)='1' or SPI_INTERNALBIT=0))
-				or spi_tick(SPI_SLOWBIT)='1' then
-			spi_ack_r<=spi_req_out; -- Momentary pulse for SPI host.
-			spi_tick<=(others=>'0');
+			spi_counter<=(others=>'0');
+		elsif (spi_fast_sd='1' and spi_counter(SPI_FASTBIT)='1')
+--				or (spi_fast_int='1' and spi_counter(0)='1')
+				or (spi_fast_int='1' and (spi_counter(SPI_INTERNALBIT)='1' or SPI_INTERNALBIT=0))
+				or spi_counter(SPI_SLOWBIT)='1' then
+			spi_ack_r<=spi_req_out;
+			spi_tick<='1';
+			spi_counter<=(others=>'0');
 		end if;
 	end if;
 end process;
@@ -519,9 +523,11 @@ end generate;
 gennodebug:
 if debug=false generate
 	debug_req<='0';
+	debug_ack<='0';
+	debug_tocpu<=(others=>'0');
 end generate;
 
-process(clk)
+process(clk, reset_n)
 begin
 	if reset_n='0' then
 		intercept<='0';
@@ -552,12 +558,12 @@ begin
 		mem_wr_d<=mem_wr;
 
 		-- Delay action of the SPI CS signals.
-		if spi_busy='0' then
-			if spi_active_d(spi_active_d'high)='1' then
-				spi_active<='1';
-			end if;
-			spi_active_d<=spi_active_d(spi_active_d'high-1 downto 0)&'0';
-		end if;
+--		if spi_busy='0' then
+--			if spi_active_d(spi_active_d'high)='1' then
+--				spi_active<='1';
+--			end if;
+--			spi_active_d<=spi_active_d(spi_active_d'high-1 downto 0)&'0';
+--		end if;
 
 		-- Write from CPU?
 		if mem_wr='1' and mem_wr_d='0' and mem_busy='1' then
@@ -585,7 +591,6 @@ begin
 
 						when X"D0" => -- SPI CS
 							spi_setcs<='1';
-							spi_active_d(0)<='1';
 
 						when X"D4" => -- SPI Data
 							spi_write<='1';
@@ -695,37 +700,38 @@ begin
 	
 		-- SPI cycles
 
-		if spi_active='1' and spi_busy='0' then
+		if spi_active='1' and spi_busy='0' and spi_tick='1' then
 			if spi_write='1' then
 				spi_trigger<='1';
 				host_to_spi<=from_cpu(7 downto 0);
 				spi_write<='0';
-			end if;
-			if spi_setcs='1' then
-				if from_cpu(1)='1' then
-					spi_cs_int <= not from_cpu(0);
-				end if;
-				if from_cpu(2)='1' then
-					spi_ss2 <= not from_cpu(0);
-				end if;
-				if from_cpu(3)='1' then
-					spi_ss3 <= not from_cpu(0);
-				end if;
-				if from_cpu(4)='1' then
-					spi_ss4 <= not from_cpu(0);
-				end if;
-				if from_cpu(5)='1' then
-					conf_data0 <= not from_cpu(0);
-				end if;
-				spi_fast_sd<=from_cpu(8);
-				spi_fast_int<=from_cpu(9);
-				spi_setcs<='0';
 			end if;
 			from_mem<=X"000000"&spi_to_host;
 			spi_active<='0';
 			mem_busy<='0';
 		end if;
 
+		if spi_setcs='1' and spi_busy='0' and spi_tick='1' then
+			if from_cpu(1)='1' then
+				spi_cs_int <= not from_cpu(0);
+			end if;
+			if from_cpu(2)='1' then
+				spi_ss2 <= not from_cpu(0);
+			end if;
+			if from_cpu(3)='1' then
+				spi_ss3 <= not from_cpu(0);
+			end if;
+			if from_cpu(4)='1' then
+				spi_ss4 <= not from_cpu(0);
+			end if;
+			if from_cpu(5)='1' then
+				conf_data0 <= not from_cpu(0);
+			end if;
+			spi_fast_sd<=from_cpu(8);
+			spi_fast_int<=from_cpu(9);
+			spi_setcs<='0';
+			mem_busy<='0';
+		end if;
 
 		-- Set this after the read operation has potentially cleared it.
 		if ser_rxint='1' then
