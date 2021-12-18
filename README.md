@@ -1,4 +1,4 @@
-##This fork is deprecated. Use https://github.com/robinsonb5/DeMiSTify instead
+## This fork is deprecated. Use https://github.com/robinsonb5/DeMiSTify instead
 
 # DeMiSTify
 Support code intended to assist in the porting of MiST FPGA cores
