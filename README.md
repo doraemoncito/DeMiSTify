@@ -1,3 +1,5 @@
+##This fork is deprecated. Use https://github.com/robinsonb5/DeMiSTify instead
+
 # DeMiSTify
 Support code intended to assist in the porting of MiST FPGA cores
 to other target boards, specifically the Turbo Chameleon 64 cartridges.
